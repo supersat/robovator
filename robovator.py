@@ -6,7 +6,9 @@ import BaseHTTPServer
 import ssl
 import serial
 import sys
+import time
 import threading
+from Queue import *
 
 class RobovatorRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -32,7 +34,9 @@ class Robovator:
 
     def read(self):
         c = self.ser.read()
-        sys.stdout.write(c)
+        if c != '\x05':
+            sys.stdout.write(c)
+            sys.stdout.flush()
         return c
 
     def wait_for_enq(self):
@@ -41,38 +45,56 @@ class Robovator:
                 self.ser.write('\x06');
                 break
 
+    def wait_for_term_req(self):
+        while True:
+            c = self.ser.read()
+            if c == '\x1b':
+                if self.read() == ' ':
+                    self.ser.write('60\r')
+                    sys.stderr.write('Got terminal type request\n')
+                    break
+            elif c == '\x05':
+                self.ser.write('\x06')
+
     def go_to_floor(self, floor):
+        floor = int(floor)
+        sys.stderr.write('Going to floor %s\n' % (floor))
         if floor < self.floor_selected:
-            self.ser.write('\x0a' * (self.floor_selected - floor))
+            for x in range(0, (self.floor_selected - floor)):
+                self.ser.write('\x0a')
+                time.sleep(0.05)
         elif floor > self.floor_selected:
-            self.ser.write('\x0b' * (floor - self.floor_selected))
+            for x in range(0, (floor - self.floor_selected)):
+                self.ser.write('\x0b')
+                time.sleep(0.05)
         self.ser.write('\x0d')
         self.floor_selected = floor
+        sys.stderr.write('Done issuing command\n')
 
     def loop(self):
-        # Wait for terminal type request
-        while True:
-            if self.read() == '\x1b':
-                if self.read() == ' ':
-                    print 'Got terminal type request';
-                    break;
+        self.wait_for_term_req()
+        self.wait_for_term_req()
 
         self.wait_for_enq()
+        sys.stderr.write('Got logo\n')
         self.ser.write(' ') # "Press any key"
         self.wait_for_enq()
+        sys.stderr.write('Got main menu\n')
         self.ser.write('\x01B\r') # F3
         self.wait_for_enq()
+        sys.stderr.write('Got hoistway view\n')
 
         while True:
             c = self.read()
             if c == '\x05':
                 self.ser.write('\x06')
             if not self.cmd_queue.empty():
+                sys.stderr.write('Got a command\n')
                 self.go_to_floor(self.cmd_queue.get())
 
 class ServerThread(threading.Thread):
-    def run():
-        self.httpd.serve_forever
+    def run(self):
+        self.httpd.serve_forever()
 
 if __name__ == "__main__":
     r = Robovator()
@@ -83,7 +105,6 @@ if __name__ == "__main__":
 
     server_thread = ServerThread()
     server_thread.httpd = httpd
-    server_thread.start()
-
+    t = server_thread.start()
+    
     r.loop()
-
