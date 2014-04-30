@@ -13,9 +13,9 @@ from Queue import *
 class RobovatorRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_head()
-        self.wfile.write('OK')
+        self.wfile.write("%s%s" % (self.server.robovator.last_floor, self.server.robovator.mode))
         if self.path.startswith('/move/'):
-            self.server.cmd_queue.put(self.path[6])
+            self.server.robovator.cmd_queue.put(self.path[6])
 
     def do_HEAD(self):
         self.send_head()
@@ -23,7 +23,7 @@ class RobovatorRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     def send_head(self):
         self.send_response(200)
         self.send_header('Content-Type', 'text/html')
-        self.send_header('Content-Length', 2)
+        self.send_header('Content-Length', 3)
         self.end_headers()
 
 class Robovator:
@@ -42,6 +42,7 @@ class Robovator:
         self.R1 = False
         self.R0 = False
         self.last_floor = 1
+        self.char_mode = '\x30'
 
     def read(self):
         c = self.ser.read()
@@ -71,22 +72,32 @@ class Robovator:
         floor = int(floor)
         sys.stderr.write('Going to floor %s\n' % (floor))
         if floor < self.floor_selected:
-            while self.mode == 'UP':
-                self.update_status()
+            if self.mode == 'UP':
+                while self.mode == 'UP':
+                    self.update_status()
+                time.sleep(0.5)                
             for x in range(0, (self.floor_selected - floor)):
                 self.ser.write('\x0a')
-                time.sleep(0.05)
+                time.sleep(0.1)
         elif floor > self.floor_selected:
-            while self.mode == 'DN':
-                self.update_status()
+            if self.mode == 'DN':
+                while self.mode == 'DN':
+                    self.update_status()
+                time.sleep(0.5)
             for x in range(0, (floor - self.floor_selected)):
                 self.ser.write('\x0b')
-                time.sleep(0.05)
+                time.sleep(0.1)
         self.ser.write('\x0d')
         self.floor_selected = floor
-        while self.last_floor != self.floor_selected:
+        while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
             self.update_status()
         sys.stderr.write('Done issuing command\n')
+
+    def is_text_active(self):
+        if self.read() == '\x1b':
+            if self.read() == '\x47':
+                self.char_mode = self.read()            
+        return self.char_mode != '\x70'
 
     def update_status(self):
         c = self.read()
@@ -94,36 +105,42 @@ class Robovator:
             self.ser.write('\x06')
         elif c == '\x1b':
             c = self.read()
-            if c == '\x3b':
+            if c == '\x47':
+                self.char_mode = self.read()
+            if c == '\x3d':
                 y = self.read()
                 x = self.read()
+                #sys.stderr.write('Moving cursor to %s, %s\n' % (ord(y), ord(x)))
                 if (y == '\x29') and (x == '\x4a'):
                     self.mode = self.read() + self.read()
                 elif (y == '\x28'):
                     if (x == '\x22'):
-                        self.RD = (self.read() == '\x1b')
+                        self.RD = self.is_text_active()
                     elif (x == '\x25'):
-                        self.PR = (self.read() == '\x1b')
+                        self.PR = self.is_text_active()
                     elif (x == '\x2a'):
-                        self.R5 = (self.read() == '\x1b')
+                        self.R5 = self.is_text_active()
                     elif (x == '\x2d'):
-                        self.R4 = (self.read() == '\x1b')
+                        self.R4 = self.is_text_active()
                     elif (x == '\x30'):
-                        self.R3 = (self.read() == '\x1b')
+                        self.R3 = self.is_text_active()
                     elif (x == '\x33'):
-                        self.R2 = (self.read() == '\x1b')
+                        self.R2 = self.is_text_active()
                     elif (x == '\x36'):
-                        self.R1 = (self.read() == '\x1b')
+                        self.R1 = self.is_text_active()
                     elif (x == '\x39'):
-                        self.R0 = (self.read() == '\x1b')
-                if self.RD:
-                    self.last_floor = \
-                        (32 if self.R5 else 0) + \
-                        (16 if self.R5 else 0) + \
-                        (8 if self.R5 else 0) + \
-                        (4 if self.R5 else 0) + \
-                        (2 if self.R5 else 0) + \
-                        (1 if self.R5 else 0) - 1                        
+                        self.R0 = self.is_text_active()
+        if self.RD:
+            floor = \
+                (32 * self.R5) + \
+                (16 * self.R4) + \
+                (8 * self.R3) + \
+                (4 * self.R2) + \
+                (2 * self.R1) + \
+                (1 * self.R0) - 1
+            parity = self.PR + self.R5 + self.R4 + self.R3 + self.R2 + self.R1 + self.R0
+            if (parity % 2) == 0 and floor != -1:
+                self.last_floor = floor
 
     def loop(self):
         self.wait_for_term_req()
@@ -153,7 +170,7 @@ if __name__ == "__main__":
 
     httpd = BaseHTTPServer.HTTPServer(('172.28.7.241', 4443), RobovatorRequestHandler)
     httpd.socket = ssl.wrap_socket(httpd.socket, certfile='robovator.crt', keyfile='robovator.key', server_side=True)
-    httpd.cmd_queue = r.cmd_queue
+    httpd.robovator = r
 
     server_thread = ServerThread()
     server_thread.httpd = httpd
