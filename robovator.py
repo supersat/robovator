@@ -72,21 +72,18 @@ class Robovator:
         floor = int(floor)
         sys.stderr.write('Going to floor %s\n' % (floor))
         if floor < self.floor_selected:
-            if self.mode == 'UP':
-                while self.mode == 'UP':
-                    self.update_status()
-                time.sleep(0.5)                
+            while self.mode == 'UP':
+                self.update_status()
             for x in range(0, (self.floor_selected - floor)):
+                self.wait(0.05)
                 self.ser.write('\x0a')
-                time.sleep(0.1)
         elif floor > self.floor_selected:
-            if self.mode == 'DN':
-                while self.mode == 'DN':
-                    self.update_status()
-                time.sleep(0.5)
+            while self.mode == 'DN':
+                self.update_status()
             for x in range(0, (floor - self.floor_selected)):
+                self.wait(0.05)
                 self.ser.write('\x0b')
-                time.sleep(0.1)
+        self.wait(0.05)
         self.ser.write('\x0d')
         self.floor_selected = floor
         while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
@@ -141,6 +138,11 @@ class Robovator:
             parity = self.PR + self.R5 + self.R4 + self.R3 + self.R2 + self.R1 + self.R0
             if (parity % 2) == 0 and floor != -1:
                 self.last_floor = floor
+
+    def wait(self, dur):
+        start_time = time.time()
+        while (time.time() - start_time) < dur:
+            self.update_status()
 
     def loop(self):
         self.wait_for_term_req()
