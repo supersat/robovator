@@ -75,15 +75,15 @@ class Robovator:
             while self.mode == 'UP':
                 self.update_status()
             for x in range(0, (self.floor_selected - floor)):
-                self.wait(0.05)
+                self.wait(0.1)
                 self.ser.write('\x0a')
         elif floor > self.floor_selected:
             while self.mode == 'DN':
                 self.update_status()
             for x in range(0, (floor - self.floor_selected)):
-                self.wait(0.05)
+                self.wait(0.1)
                 self.ser.write('\x0b')
-        self.wait(0.05)
+        self.wait(0.1)
         self.ser.write('\x0d')
         self.floor_selected = floor
         while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
