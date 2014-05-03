@@ -171,7 +171,9 @@ if __name__ == "__main__":
     r = Robovator()
 
     httpd = BaseHTTPServer.HTTPServer(('172.28.7.241', 4443), RobovatorRequestHandler)
-    httpd.socket = ssl.wrap_socket(httpd.socket, certfile='robovator.crt', keyfile='robovator.key', server_side=True)
+    httpd.socket = ssl.wrap_socket(httpd.socket, certfile='robovator.crt',
+        keyfile='robovator.key', cert_reqs=ssl.CERT_REQUIRED,
+        ca_certs='robovator.crt', server_side=True)
     httpd.robovator = r
 
     server_thread = ServerThread()
