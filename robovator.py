@@ -2,6 +2,7 @@
 # Robovator
 # An HTTPS interface to the MCE IMC-SCR elevator controller
 
+import argparse
 import BaseHTTPServer
 import ssl
 import serial
@@ -27,10 +28,12 @@ class RobovatorRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.end_headers()
 
 class Robovator:
-    def __init__(self):
+    def __init__(self, args):
         self.ser = serial.Serial('/dev/ttyS0', 19200, xonxoff=1, rtscts=0, timeout=None);
         self.floor_selected = 0;
         self.cmd_queue = Queue(2)
+        self._kbdlocked = False
+        self.args = args
 
         self.mode = 'XX'
         self.RD = False
@@ -46,7 +49,7 @@ class Robovator:
 
     def read(self):
         c = self.ser.read()
-        if c != '\x05':
+        if c != '\x05' and not args.silent:
             sys.stdout.write(c)
             sys.stdout.flush()
         return c
@@ -68,6 +71,11 @@ class Robovator:
             elif c == '\x05':
                 self.ser.write('\x06')
 
+    def wait_for_kbd_unlocked(self):
+        self.update_status()
+        while self._kbdlocked:
+            self.update_status()
+
     def go_to_floor(self, floor):
         floor = int(floor)
         sys.stderr.write('Going to floor %s\n' % (floor))
@@ -75,19 +83,23 @@ class Robovator:
             while self.mode == 'UP':
                 self.update_status()
             for x in range(0, (self.floor_selected - floor)):
-                self.wait(0.1)
+                self.wait(0.05)
+                self.wait_for_kbd_unlocked()
                 self.ser.write('\x0a')
         elif floor > self.floor_selected:
             while self.mode == 'DN':
                 self.update_status()
             for x in range(0, (floor - self.floor_selected)):
-                self.wait(0.1)
+                self.wait(0.05)
+                self.wait_for_kbd_unlocked()
                 self.ser.write('\x0b')
-        self.wait(0.1)
-        self.ser.write('\x0d')
         self.floor_selected = floor
-        while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
-            self.update_status()
+        if not args.dry_run:
+            self.wait(0.05)
+            self.wait_for_kbd_unlocked()
+            self.ser.write('\x0d')
+            while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
+                self.update_status()
         sys.stderr.write('Done issuing command\n')
 
     def is_text_active(self):
@@ -100,6 +112,10 @@ class Robovator:
         c = self.read()
         if c == '\x05':
             self.ser.write('\x06')
+        elif c == '\x0e':
+            self._kbdlocked = False
+        elif c == '\x0f':
+            self._kbdlocked = True
         elif c == '\x1b':
             c = self.read()
             if c == '\x47':
@@ -168,12 +184,21 @@ class ServerThread(threading.Thread):
         self.httpd.serve_forever()
 
 if __name__ == "__main__":
-    r = Robovator()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--dry-run",
+        help="Do not actually move the elevator", action="store_true")
+    parser.add_argument("-c", "--no-cert",
+        help="Do not require a valid client certificate", action="store_true")
+    parser.add_argument("-s", "--silent",
+        help="Do not pass through the terminal", action="store_true")
+    args = parser.parse_args()
+
+    r = Robovator(args)
 
     httpd = BaseHTTPServer.HTTPServer(('172.28.7.241', 4443), RobovatorRequestHandler)
     httpd.socket = ssl.wrap_socket(httpd.socket, certfile='robovator.crt',
-        keyfile='robovator.key', cert_reqs=ssl.CERT_REQUIRED,
-        ca_certs='robovator.crt', server_side=True)
+        keyfile='robovator.key', ca_certs='robovator.crt', server_side=True,
+        cert_reqs = ssl.CERT_NONE if args.no_cert else ssl.CERT_REQUIRED)
     httpd.robovator = r
 
     server_thread = ServerThread()
