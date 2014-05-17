@@ -76,6 +76,11 @@ class Robovator:
         while self._kbdlocked:
             self.update_status()
 
+    def wait_for_floor_sel_update(self):
+        self._floor_sel_updated = False
+        while not self._floor_sel_updated:
+            self.update_status()
+
     def go_to_floor(self, floor):
         floor = int(floor)
         sys.stderr.write('Going to floor %s\n' % (floor))
@@ -83,19 +88,18 @@ class Robovator:
             while self.mode == 'UP':
                 self.update_status()
             for x in range(0, (self.floor_selected - floor)):
-                self.wait(0.05)
                 self.wait_for_kbd_unlocked()
                 self.ser.write('\x0a')
+                self.wait_for_floor_sel_update()
         elif floor > self.floor_selected:
             while self.mode == 'DN':
                 self.update_status()
             for x in range(0, (floor - self.floor_selected)):
-                self.wait(0.05)
                 self.wait_for_kbd_unlocked()
                 self.ser.write('\x0b')
+                self.wait_for_floor_sel_update()
         self.floor_selected = floor
         if not args.dry_run:
-            self.wait(0.05)
             self.wait_for_kbd_unlocked()
             self.ser.write('\x0d')
             while (self.last_floor != self.floor_selected) and (self.mode != 'PK'):
@@ -116,6 +120,8 @@ class Robovator:
             self._kbdlocked = False
         elif c == '\x0f':
             self._kbdlocked = True
+        elif c == '<':
+            self._floor_sel_updated = True
         elif c == '\x1b':
             c = self.read()
             if c == '\x47':
